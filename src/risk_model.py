@@ -11,6 +11,13 @@ import pandas as pd
 
 
 PANEL_KEYS = ["province", "district", "industry_code"]
+SCORE_WEIGHTS = {
+    "amount_stress": 0.25,
+    "transaction_stress": 0.30,
+    "persistence_stress": 0.20,
+    "demographic_stress": 0.15,
+    "volatility_stress": 0.10,
+}
 
 
 def add_cpi_adjustment(monthly: pd.DataFrame, cpi: pd.DataFrame) -> pd.DataFrame:
@@ -294,12 +301,9 @@ def summarize_panel_stress(
     summary.loc[eligible, "persistence_stress"] = summary.loc[
         eligible, "joint_underperformance_rate"
     ].fillna(0)
-    summary.loc[eligible, "csdi"] = 100 * (
-        0.25 * summary.loc[eligible, "amount_stress"]
-        + 0.30 * summary.loc[eligible, "transaction_stress"]
-        + 0.20 * summary.loc[eligible, "persistence_stress"]
-        + 0.15 * summary.loc[eligible, "demographic_stress"]
-        + 0.10 * summary.loc[eligible, "volatility_stress"]
+    summary.loc[eligible, "csdi"] = 100 * sum(
+        weight * summary.loc[eligible, component]
+        for component, weight in SCORE_WEIGHTS.items()
     )
     summary["risk_tier"] = "low_signal"
     summary.loc[eligible & (summary["csdi"] < 40), "risk_tier"] = "stable"

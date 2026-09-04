@@ -5,10 +5,8 @@ from pathlib import Path
 import pandas as pd
 
 from src.normalize_data import normalize_consumption
-from src.features import (
-    build_region_industry_month, add_national_benchmarks, add_two_way_benchmarks,
-)
-from src.risk_model import build_core_age_metrics, summarize_panel_stress
+from src.analysis_workflow import run_analysis
+from src.demo_report import render_report
 
 
 def run_demo(output: Path) -> None:
@@ -20,7 +18,7 @@ def run_demo(output: Path) -> None:
             for month in range(6):
                 for age in [3, 4]:
                     # Invented trends; no fitted parameters or sampled real records.
-                    base = 8 if (region, industry) == (3, 2) else 250
+                    base = 8 if (region, industry) == (3, 2) else (60 if (region, industry) == (2, 2) else 250)
                     trend = 1 + (region - industry) * month * 0.025
                     count = max(1, round(base * trend * (1 if age == 3 else 0.7)))
                     rows.append({
@@ -32,13 +30,27 @@ def run_demo(output: Path) -> None:
                         'amt': count * (10000 + 100 * industry * month), 'cnt': count,
                     })
     raw = pd.DataFrame(rows)
+    # Two intentionally faulty panels illustrate review instead of silent removal.
+    duplicate = raw.loc[(raw.CCG_NM == '가상구1') & (raw.TP_BUZ_NO == 90001)].copy()
+    duplicate['CCG_NM'] = '가상중복구'
+    duplicate = pd.concat([duplicate, duplicate.iloc[[0]]], ignore_index=True)
+    missing = raw.loc[(raw.CCG_NM == '가상구1') & (raw.TP_BUZ_NO == 90001) & (raw.STRD_YYMM != 202603)].copy()
+    missing['CCG_NM'] = '가상누락구'
+    raw = pd.concat([raw, duplicate, missing], ignore_index=True)
     normalized = normalize_consumption(raw)
-    monthly = add_two_way_benchmarks(add_national_benchmarks(
-        build_region_industry_month(normalized)))
-    panel = summarize_panel_stress(monthly, build_core_age_metrics(normalized))
+    result = run_analysis(normalized, pd.date_range('2026-01-01', periods=6, freq='MS'))
+    monthly = result['monthly']
+    panel = result['scores'].loc[result['scores'].scenario == 'baseline_100']
     raw.to_csv(output / 'synthetic_input.csv', index=False, encoding='utf-8-sig')
     monthly.to_csv(output / 'synthetic_monthly.csv', index=False, encoding='utf-8-sig')
     panel.to_csv(output / 'synthetic_panel_scores.csv', index=False, encoding='utf-8-sig')
+    for name, key in [('quality_report', 'quality'), ('sensitivity_comparison', 'comparison'), ('scenario_scores', 'scores')]:
+        result[key].to_csv(output / f'{name}.csv', index=False, encoding='utf-8-sig')
+    trace = result['walkthrough']
+    if trace is not None:
+        trace['monthly'].to_csv(output / 'walkthrough_monthly.csv', index=False, encoding='utf-8-sig')
+        trace['contributions'].to_csv(output / 'walkthrough_contributions.csv', index=False, encoding='utf-8-sig')
+    (output / 'REPORT.md').write_text(render_report(result), encoding='utf-8')
     (output / 'NOTICE.txt').write_text(
         'SYNTHETIC ONLY — 가상데이터 실행 예제. 실제 소비·신용 위험 결과가 아닙니다.\n'
         'No contest data, CPI, K-means, predictive validation or real regional estimates.\n',
